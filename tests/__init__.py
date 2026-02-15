@@ -1,0 +1,2 @@
+"""Tests para Fran Bot."""
+

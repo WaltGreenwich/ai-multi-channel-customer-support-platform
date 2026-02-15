@@ -1,0 +1,147 @@
+services:
+  # ═══════════════════════════════════════════════════════
+  # BASE DE DATOS
+  # ═══════════════════════════════════════════════════════
+  db:
+    image: postgres:15-alpine
+    container_name: fran-bot-db
+    environment:
+      POSTGRES_DB: fran_bot_db
+      POSTGRES_USER: fran_user
+      POSTGRES_PASSWORD: fran_password
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U fran_user -d fran_bot_db"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - fran-network
+
+  # ═══════════════════════════════════════════════════════
+  # REDIS (Broker Celery)
+  # ═══════════════════════════════════════════════════════
+  redis:
+    image: redis:7-alpine
+    container_name: fran-bot-redis
+    ports:
+      - "6379:6379"
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    networks:
+      - fran-network
+
+  # ═══════════════════════════════════════════════════════
+  # WEB (Django)
+  # ═══════════════════════════════════════════════════════
+  web:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: fran-bot-web
+    command: >
+      sh -c "python manage.py migrate &&
+             python manage.py collectstatic --noinput &&
+             gunicorn config.wsgi:application --bind 0.0.0.0:8000 --workers 3 --timeout 120"
+    volumes:
+      - ./backend:/app
+      - ./tests:/app/tests
+      - media_volume:/app/media
+      - static_volume:/app/staticfiles
+    ports:
+      - "8000:8000"
+    env_file:
+      - ./backend/.env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/admin/"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - fran-network
+
+  # ═══════════════════════════════════════════════════════
+  # CELERY WORKER
+  # ═══════════════════════════════════════════════════════
+  celery:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: fran-bot-celery
+    command: celery -A config worker --loglevel=info --concurrency=2
+    volumes:
+      - ./backend:/app
+      - media_volume:/app/media
+    env_file:
+      - ./backend/.env
+    depends_on:
+      db:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "celery", "-A", "config", "inspect", "ping"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+    networks:
+      - fran-network
+
+  # ═══════════════════════════════════════════════════════
+  # FLOWER (Monitoreo Celery)
+  # ═══════════════════════════════════════════════════════
+  flower:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: fran-bot-flower
+    command: celery -A config flower --port=5555
+    ports:
+      - "5555:5555"
+    env_file:
+      - ./backend/.env
+    depends_on:
+      - redis
+      - celery
+    networks:
+      - fran-network
+
+  # ═══════════════════════════════════════════════════════
+  # NGROK (Túnel para Webhooks) ⭐ NUEVO
+  # ═══════════════════════════════════════════════════════
+  ngrok:
+    image: ngrok/ngrok:latest
+    container_name: fran-bot-ngrok
+    restart: unless-stopped
+    command:
+      - "http"
+      - "web:8000"
+      - "--log=stdout"
+    ports:
+      - "4040:4040"  # Dashboard ngrok
+    env_file:
+      - ./backend/.env
+    depends_on:
+      - web
+    networks:
+      - fran-network
+
+networks:
+  fran-network:
+    driver: bridge
+
+volumes:
+  postgres_data:
+  media_volume:
+  static_volume:
