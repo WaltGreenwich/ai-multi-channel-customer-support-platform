@@ -1,10 +1,12 @@
 from __future__ import annotations
 
 import logging
+import os
 from datetime import datetime
 from typing import cast
 
 from django.utils import timezone
+from django.conf import settings
 
 from apps.bot.models import Conversation, Message, Client
 from apps.bot.prompts import (
@@ -27,6 +29,7 @@ from apps.bot.tools import (
 
 logger = logging.getLogger(__name__)
 
+# --- HELPERS ---
 
 def _get_system_prompt_for_channel(channel: str) -> str:
     if channel == "telegram":
@@ -37,16 +40,13 @@ def _get_system_prompt_for_channel(channel: str) -> str:
         return get_email_prompt()
     return get_base_system_prompt()
 
+def _is_trello_enabled() -> bool:
+    """Verifica si Trello está habilitado en el entorno."""
+    return os.getenv("USE_TRELLO", "false").lower() == "true"
+
+# --- NODOS ---
 
 def entry_node(state: AgentState) -> AgentState:
-    """
-    Punto de entrada del grafo.
-
-    1. Valida mensaje.
-    2. Carga/crea cliente.
-    3. Carga historial reciente.
-    4. Persiste mensaje de usuario.
-    """
     start_ts = timezone.now()
     state.setdefault("nodes_executed", []).append("entry")
 
@@ -54,10 +54,9 @@ def entry_node(state: AgentState) -> AgentState:
     if not phone:
         raise ValueError("Falta phone en client_data para entry_node")
 
-    client_info = query_client_data.invoke({"phone": phone})  # type: ignore[arg-type]
+    client_info = query_client_data.invoke({"phone": phone})
 
     if client_info is None:
-        # Crear cliente mínimo en Django
         client = Client.objects.create(
             name=state["client_data"].get("name", "Desconocido"),
             phone=phone,
@@ -70,7 +69,6 @@ def entry_node(state: AgentState) -> AgentState:
 
     state["client_data"] = client_info
 
-    # Obtener/crear conversación
     conv, _ = Conversation.objects.get_or_create(
         conversation_id=state["conversation_id"],
         defaults={
@@ -81,7 +79,6 @@ def entry_node(state: AgentState) -> AgentState:
         },
     )
 
-    # Historial últimos 10 mensajes
     history_qs = conv.messages.order_by("-timestamp")[:10]
     history = [
         {"role": m.role, "content": m.content, "timestamp": m.timestamp.isoformat()}
@@ -89,7 +86,6 @@ def entry_node(state: AgentState) -> AgentState:
     ]
     state["conversation_history"] = history
 
-    # Guardar mensaje de usuario
     Message.objects.create(
         conversation=conv,
         role="user",
@@ -105,72 +101,58 @@ def entry_node(state: AgentState) -> AgentState:
 
 def router_node(state: AgentState) -> AgentState:
     """
-    Clasificador simple de intenciones basado en keywords.
+    Nodo de enrutamiento: Detecta saludos rápidos para ahorrar tokens y
+    clasifica la intención del usuario para el flujo de Trello.
     """
     state.setdefault("nodes_executed", []).append("router")
-    text = (state.get("user_message") or "").lower()
+    text = (state.get("user_message") or "").lower().strip()
 
-    intent = "desconocido"
-    needs_rag = False
+    # 1. LÓGICA DE SALUDO (Bypass de IA)
+    # Solo activamos el bypass si el mensaje es EXCLUSIVAMENTE un saludo corto.
+    # Si el texto es largo, dejamos que pase a Gemini para no ignorar la pregunta.
+    saludos = ["hola", "buenos dias", "buenas tardes", "buenas noches", "hey", "buen dia", "saludos"]
+    
+    es_saludo_puro = any(s == text for s in saludos)
+    es_saludo_corto = len(text) < 12 and any(s in text for s in saludos)
 
-    if any(k in text for k in ["deuda", "debo", "pago", "estado de cuenta"]):
-        intent = "consulta_deuda"
-        needs_rag = True
-    elif any(k in text for k in ["estado de cuenta", "reglamento", "documento"]):
-        intent = "solicitud_documento"
-        needs_rag = True
-    elif any(k in text for k in ["problema", "falla", "elevador", "luz", "agua"]):
-        intent = "reporte_problema"
-        needs_rag = True
-    elif any(k in text for k in ["horario", "piscina", "gimnasio", "administración"]):
-        intent = "faq_simple"
-        needs_rag = False
+    if es_saludo_puro or es_saludo_corto:
+        state["ai_response"] = (
+            "¡Hola! Soy Fran Bot, tu asistente virtual para el condominio. "
+            "¿En qué puedo ayudarte hoy?"
+        )
+        state["quality_passed"] = True
+        state["is_greeting"] = True
+        state["detected_intent"] = "saludo"
+        return state
 
-    state["detected_intent"] = intent
-    state["needs_rag"] = needs_rag
-    return state
+    # Si llegamos aquí, NO es un saludo simple (o es un saludo con pregunta)
+    state["is_greeting"] = False
 
-
-def direct_response_node(state: AgentState) -> AgentState:
-    """
-    Respuestas instantáneas para FAQs simples sin IA.
-    """
-    state.setdefault("nodes_executed", []).append("direct_response")
-
-    faqs = {
-        "horario_piscina": "La piscina está disponible de 8:00 AM a 8:00 PM todos los días.",
-        "horario_gimnasio": "El gimnasio abre de 6:00 AM a 10:00 PM.",
-        "administracion": (
-            "La oficina de administración atiende de lunes a viernes de 9:00 AM a 5:00 PM "
-            "en el primer piso de la Torre A."
-        ),
+    # 2. CLASIFICACIÓN DE INTENCIONES (Para lógica de Trello posterior)
+    # Definimos diccionarios de palabras clave para mayor claridad
+    keywords = {
+        "consulta_deuda": ["deuda", "pago", "debo", "monto", "expensas", "cbu", "alias", "pagué", "comprobante"],
+        "solicitud_documento": ["documento", "reglamento", "estatuto", "copia", "acta", "pdf", "archivo"],
+        "reporte_problema": ["falla", "problema", "roto", "averia", "limpieza", "ascensor", "luz", "agua", "humedad", "ruido"]
     }
 
-    msg = (state.get("user_message") or "").lower()
-    answer = (
-        "Te explico:\n"
-        "- Piscina: 8:00 AM – 8:00 PM.\n"
-        "- Gimnasio: 6:00 AM – 10:00 PM.\n"
-        "- Administración: Lun–Vie 9:00 AM – 5:00 PM en Torre A."
-    )
+    intent = "desconocido"
+    for intent_name, keys in keywords.items():
+        if any(k in text for k in keys):
+            intent = intent_name
+            break # Detenemos en la primera coincidencia clara
 
-    if "piscina" in msg:
-        answer = faqs["horario_piscina"]
-    elif "gimnasio" in msg:
-        answer = faqs["horario_gimnasio"]
-    elif "administr" in msg:
-        answer = faqs["administracion"]
-
-    state["ai_response"] = answer
+    state["detected_intent"] = intent
+    
+    # Marcamos si necesita RAG (casi siempre que no sea saludo corto)
+    state["needs_rag"] = True 
+    
     return state
 
 
 def rag_node(state: AgentState) -> AgentState:
-    """
-    Búsqueda simple en base de conocimiento.
-    """
     state.setdefault("nodes_executed", []).append("rag")
-    results = search_knowledge_base.invoke(  # type: ignore[arg-type]
+    results = search_knowledge_base.invoke(
         {"query": state.get("user_message", ""), "top_k": 3}
     )
     state["rag_results"] = cast(list[dict], results)
@@ -178,299 +160,126 @@ def rag_node(state: AgentState) -> AgentState:
 
 
 def gemini_processor_node(state: AgentState) -> AgentState:
-    """
-    Generación de respuesta con Gemini 1.5 Flash.
-    """
     import google.generativeai as genai
-    from django.conf import settings
-
     state.setdefault("nodes_executed", []).append("gemini")
 
-    # 1. Procesar multimedia
     multimedia_context = ""
     for attachment in state.get("attachments", []):
         file_url = attachment.get("url")
         file_type = attachment.get("type")
-        if not file_url or not file_type:
-            continue
+        if not file_url or not file_type: continue
 
-        result = process_multimedia_with_gemini.invoke(  # type: ignore[arg-type]
-            {
-                "file_path_or_url": file_url,
-                "file_type": file_type,
-                "prompt": "Analiza este archivo en el contexto de gestión de condominios",
-            }
-        )
+        result = process_multimedia_with_gemini.invoke({
+            "file_path_or_url": file_url,
+            "file_type": file_type,
+            "prompt": "Analiza este archivo para gestión de condominios",
+        })
 
         if file_type == "audio":
-            transcription = result.get("transcription", "")
-            multimedia_context += f"\n[Audio transcrito]: {transcription}"
-            if not state.get("user_message"):
-                state["user_message"] = transcription
+            multimedia_context += f"\n[Audio]: {result.get('transcription', '')}"
         elif file_type == "image":
-            multimedia_context += f"\n[Imagen analizada]: {result.get('analysis', '')}"
-        elif file_type == "pdf":
-            extracted = result.get("extracted_text", "")[:500]
-            multimedia_context += f"\n[PDF extraído]: {extracted}..."
-        elif file_type == "video":
-            multimedia_context += f"\n[Video analizado]: {result.get('analysis', '')}"
+            multimedia_context += f"\n[Imagen]: {result.get('analysis', '')}"
+        # ... otros tipos
 
-    # 2. Construir prompt
-    channel = state["channel"]
-    system_prompt = _get_system_prompt_for_channel(channel)
+    rag_snippets = "\n".join([f"- {doc.get('content')}" for doc in state.get("rag_results", [])])
+    system_prompt = _get_system_prompt_for_channel(state["channel"])
+    
+    full_prompt = f"{system_prompt}\n\nCONOCIMIENTO:\n{rag_snippets}\n\nCONTEXTO EXTRA: {multimedia_context}\nUSUARIO: {state.get('user_message')}"
 
-    rag_snippets = ""
-    for doc in state.get("rag_results", []):
-        rag_snippets += f"\n### {doc.get('title')}\n{doc.get('content')}\n"
-
-    history_lines = []
-    for h in state.get("conversation_history", []):
-        history_lines.append(f"{h['role']}: {h['content']}")
-    history_text = "\n".join(history_lines)
-
-    full_prompt = f"""
-{system_prompt}
-
-Contexto del cliente:
-{state.get('client_data')}
-
-Documentos relevantes (RAG):
-{rag_snippets}
-
-Contexto multimedia:
-{multimedia_context}
-
-Historial de conversación:
-{history_text}
-
-Mensaje actual del usuario:
-{state.get('user_message')}
-
-Genera una respuesta útil, precisa y centrada en la gestión del condominio.
-"""
-
-    # 3. Llamar a Gemini
     genai.configure(api_key=settings.GOOGLE_API_KEY)
-    model = genai.GenerativeModel("gemini-1.5-flash")
+    model = genai.GenerativeModel("gemini-flash-latest")
     response = model.generate_content(full_prompt)
+    
     state["ai_response"] = response.text
     return state
 
 
 def quality_check_node(state: AgentState) -> AgentState:
-    """
-    Valida calidad de la respuesta generada.
-    """
     state.setdefault("nodes_executed", []).append("quality_check")
-
     text = (state.get("ai_response") or "").strip()
-    user_msg = (state.get("user_message") or "").strip()
-
+    
     passes = True
     reason = ""
-    score = 1.0
-
-    low_markers = ["no sé", "no puedo", "no tengo información", "soy un modelo"]
-    if len(text) < 20:
+    
+    if len(text) < 15:
         passes = False
         reason = "Respuesta demasiado corta"
-        score = 0.2
-    elif any(m in text.lower() for m in low_markers):
+    elif any(m in text.lower() for m in ["no sé", "no tengo información", "soy un modelo"]):
         passes = False
-        reason = "Respuesta indica falta de capacidad"
-        score = 0.3
-    elif text.lower().startswith(user_msg.lower()[:30]):
-        passes = False
-        reason = "Respuesta parece repetir la pregunta"
-        score = 0.4
+        reason = "IA no encontró datos"
 
     state["quality_passed"] = passes
-    state["quality_score"] = score
     state["quality_fail_reason"] = reason
+    state["quality_score"] = 1.0 if passes else 0.0
     return state
 
 
 def fallback_node(state: AgentState) -> AgentState:
-    """
-    Manejo de casos donde IA no puede resolver.
-    """
     state.setdefault("nodes_executed", []).append("fallback")
-
-    channel = state["channel"]
+    state["used_fallback"] = True
     client = state["client_data"]
 
-    if channel in ("telegram", "whatsapp"):
-        response = (
-            "Lo siento, tu consulta requiere una revisión más detallada por parte "
-            "de la administración del condominio. Registraremos un ticket PRIORITARIO "
-            "y se comunicarán contigo en las próximas 24 horas al teléfono "
-            f"{client.get('phone')}.\n\n"
-            "Si se trata de una emergencia (luz, agua, seguridad), por favor llama "
-            "inmediatamente al 📞 (01) 234-5678."
-        )
-    else:
-        response = (
-            "Estimado(a),\n\n"
-            "Tu consulta requiere una revisión más detallada por parte de la "
-            "administración del condominio. Hemos registrado un ticket prioritario "
-            "y nos pondremos en contacto contigo en las próximas 24 horas.\n\n"
-            "Saludos cordiales,\nAdministración del condominio"
-        )
-
+    response = (
+        "Lo siento, tu consulta requiere revisión humana. He registrado un ticket "
+        f"y te contactaremos al {client.get('phone')} en menos de 24h."
+    )
     state["final_response"] = response
-    state["used_fallback"] = True
-    state["fallback_reason"] = state.get("quality_fail_reason", "Calidad insuficiente")
 
-    # Crear ticket Trello URGENTE
-    title, description = format_trello_ticket_complete(
-        state, category="intervencion_requerida", priority="URGENT"
-    )
-    trello_result = create_trello_card.invoke(  # type: ignore[arg-type]
-        {
-            "title": title,
-            "description": description,
-            "category": "intervencion_requerida",
-            "priority": "URGENT",
-        }
-    )
-
-    state["trello_ticket_created"] = True
-    state["trello_ticket_data"] = trello_result
+    # CREACIÓN DE TICKET CONDICIONAL
+    if _is_trello_enabled():
+        title, description = format_trello_ticket_complete(state, category="URGENTE", priority="HIGH")
+        create_trello_card.invoke({
+            "title": title, "description": description, 
+            "category": "intervencion_requerida", "priority": "URGENT"
+        })
+        state["trello_ticket_created"] = True
+        logger.info("Ticket de fallback creado en Trello.")
 
     return state
 
 
 def action_planner_node(state: AgentState) -> AgentState:
-    """
-    Planificador de acciones finales: envío por canal + tickets Trello.
-    """
     start = datetime.utcnow()
     state.setdefault("nodes_executed", []).append("action_planner")
     actions: list[dict] = []
-
-    conv = Conversation.objects.get(conversation_id=state["conversation_id"])
-
-    # Determinar texto final
+    intent = state.get("detected_intent")
     final_text = state.get("final_response") or state.get("ai_response") or ""
-    state["final_response"] = final_text
 
-    # 1. Enviar por canal
+    # 1. ENVÍO POR CANAL
     if state["channel"] == "telegram" and state.get("telegram_chat_id"):
-        result = send_telegram_message.invoke(  # type: ignore[arg-type]
-            {
-                "chat_id": state["telegram_chat_id"],
-                "text": final_text,
-                "parse_mode": "Markdown",
-            }
-        )
-        actions.append(
-            {
-                "action": "send_message",
-                "channel": "telegram",
-                "success": result.get("success", True),
-                "message_id": result.get("message_id"),
-            }
-        )
-    elif state["channel"] == "whatsapp":
-        result = send_whatsapp_message.invoke(  # type: ignore[arg-type]
-            {"phone": state["client_data"]["phone"], "text": final_text}
-        )
-        actions.append(
-            {
-                "action": "send_message",
-                "channel": "whatsapp",
-                "success": result.get("success", True),
-                "message_id": result.get("message_id"),
-            }
-        )
-    elif state["channel"] == "email" and state["client_data"].get("email"):
-        result = create_gmail_draft.invoke(  # type: ignore[arg-type]
-            {
-                "to": state["client_data"]["email"],
-                "subject": "Respuesta automática - Fran Bot",
-                "body": final_text,
-            }
-        )
-        actions.append(
-            {
-                "action": "create_draft",
-                "channel": "email",
-                "success": True,
-                "draft_id": result.get("draft_id"),
-                "url": result.get("url"),
-            }
-        )
+        result = send_telegram_message.invoke({
+            "chat_id": state["telegram_chat_id"],
+            "text": final_text,
+            "parse_mode": "Markdown",
+        })
+        actions.append({"action": "send_telegram", "success": result.get("success", True)})
 
-    # 2. Crear ticket Trello si aplica (no fallback)
-    intent = state.get("detected_intent", "desconocido")
-    if not state.get("used_fallback"):
-        category = None
-        priority = "MEDIUM"
-        if intent == "solicitud_documento":
-            category = "solicitud_documento"
-            priority = "MEDIUM"
-        elif intent == "reporte_problema":
-            category = "reporte_problema"
-            priority = "HIGH"
-        elif intent == "consulta_deuda":
-            category = "consulta_deuda"
-            priority = "MEDIUM"
-
-        if category:
-            title, description = format_trello_ticket_complete(
-                state, category=category, priority=priority
-            )
-            trello_result = create_trello_card.invoke(  # type: ignore[arg-type]
-                {
-                    "title": title,
-                    "description": description,
-                    "category": category,
-                    "priority": priority,
-                }
-            )
+    # 2. TRELLO CONDICIONAL (SI NO ES SALUDO Y NO ES FALLBACK)
+    if _is_trello_enabled() and not state.get("trello_ticket_created") and intent != "desconocido":
+        category_map = {
+            "solicitud_documento": ("solicitud_documento", "MEDIUM"),
+            "reporte_problema": ("reporte_problema", "HIGH"),
+            "consulta_deuda": ("consulta_deuda", "MEDIUM"),
+        }
+        
+        if intent in category_map:
+            cat, prio = category_map[intent]
+            title, desc = format_trello_ticket_complete(state, category=cat, priority=prio)
+            trello_res = create_trello_card.invoke({
+                "title": title, "description": desc, "category": cat, "priority": prio
+            })
             state["trello_ticket_created"] = True
-            state["trello_ticket_data"] = trello_result
-            actions.append(
-                {
-                    "action": "create_trello_ticket",
-                    "success": True,
-                    "ticket_id": trello_result.get("id"),
-                    "ticket_url": trello_result.get("url"),
-                    "priority": priority,
-                }
-            )
+            actions.append({"action": "create_trello", "id": trello_res.get("id")})
 
-    # 3. Guardar mensaje de asistente y actualizar conversación
+    # 3. PERSISTENCIA EN DB
+    conv = Conversation.objects.get(conversation_id=state["conversation_id"])
     Message.objects.create(
-        conversation=conv,
-        role="assistant",
-        content=final_text,
-        attachments=[],
-        node_executed="action_planner",
+        conversation=conv, role="assistant", content=final_text, node_executed="action_planner"
     )
 
     conv.state = "fallback" if state.get("used_fallback") else "ai_resolved"
-    conv.used_fallback = state.get("used_fallback", False)
-    conv.fallback_reason = state.get("fallback_reason")
-    conv.quality_score = state.get("quality_score")
-    conv.processing_time_seconds = float(
-        state.get("execution_time_seconds", 0.0)
-    )
-    if conv.state in ("fallback", "ai_resolved"):
-        conv.resolved_at = timezone.now()
-    conv.context = {
-        "detected_intent": intent,
-        "rag_results_count": len(state.get("rag_results", [])),
-    }
-    conv.save(update_fields=["state", "used_fallback", "fallback_reason",
-                             "quality_score", "processing_time_seconds",
-                             "resolved_at", "context", "updated_at"])
+    conv.save()
 
     state["actions_taken"] = actions
-    end = datetime.utcnow()
-    state["execution_time_seconds"] = state.get("execution_time_seconds", 0.0) + (
-        end - start
-    ).total_seconds()
-
+    state["execution_time_seconds"] = (datetime.utcnow() - start).total_seconds()
     return state
-

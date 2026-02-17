@@ -204,6 +204,7 @@ make ngrok-setup
 # Solución automática:
 
 make up           # Levanta servicios (nueva URL)
+make ngrok-url    #Obtener URL de ngrok
 make ngrok-setup  # Reconfigura webhook automáticamente
 ```
 

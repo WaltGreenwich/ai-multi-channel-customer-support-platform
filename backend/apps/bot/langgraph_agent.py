@@ -2,80 +2,77 @@ from __future__ import annotations
 
 """
 Definición del grafo de estados de LangGraph para Fran Bot.
+Optimizado para ahorro de tokens (greetings bypass) y manejo de estados.
 """
 
 from typing import Callable
-
 from langgraph.graph import StateGraph, END
-
 from apps.bot.state import AgentState
 from apps.bot import nodes
 
-
 def _route_from_router(state: AgentState) -> str:
-    intent = state.get("detected_intent", "desconocido")
-    if intent == "faq_simple":
-        return "direct_response"
-    # todo lo demás va por RAG + Gemini
+    """
+    Decide si el flujo debe ir a RAG o saltar directo al Action Planner.
+    Si es un saludo, no necesitamos procesar RAG ni Gemini.
+    """
+    if state.get("is_greeting", False):
+        return "action_planner"
     return "rag"
 
-
 def _route_after_quality(state: AgentState) -> str:
+    """
+    Si la calidad es insuficiente, redirige al nodo de fallback.
+    """
     return "action_planner" if state.get("quality_passed", False) else "fallback"
 
-
 def build_agent_graph() -> Callable[[AgentState], AgentState]:
-    """
-    Construir el grafo de 8 nodos y devolver un runner síncrono.
-    """
-    workflow: StateGraph[AgentState] = StateGraph(AgentState)  # type: ignore[arg-type]
+    workflow: StateGraph[AgentState] = StateGraph(AgentState)
 
-    # Nodos
+    # 1. Registro de Nodos
     workflow.add_node("entry", nodes.entry_node)
     workflow.add_node("router", nodes.router_node)
-    workflow.add_node("direct_response", nodes.direct_response_node)
     workflow.add_node("rag", nodes.rag_node)
     workflow.add_node("gemini", nodes.gemini_processor_node)
     workflow.add_node("quality_check", nodes.quality_check_node)
     workflow.add_node("fallback", nodes.fallback_node)
     workflow.add_node("action_planner", nodes.action_planner_node)
 
-    # Flujo principal
+    # 2. Definición del Flujo
     workflow.set_entry_point("entry")
     workflow.add_edge("entry", "router")
 
-    # Router → direct / rag
+    # ATAJO DE SALUDOS: Condicional para ahorrar API
     workflow.add_conditional_edges(
         "router",
         _route_from_router,
         {
-            "direct_response": "direct_response",
-            "rag": "rag",
-        },
+            "action_planner": "action_planner", # Bypass total si es saludo
+            "rag": "rag"                        # Flujo normal si requiere análisis
+        }
     )
 
-    # Direct response salta a quality_check (sin RAG/Gemini)
-    workflow.add_edge("direct_response", "quality_check")
-
-    # RAG → Gemini → Quality
+    # Flujo Estándar de Procesamiento
     workflow.add_edge("rag", "gemini")
     workflow.add_edge("gemini", "quality_check")
 
-    # Quality → fallback / action_planner → END
+    # CONTROL DE CALIDAD: Decide si la respuesta de la IA es válida
     workflow.add_conditional_edges(
         "quality_check",
         _route_after_quality,
-        {"fallback": "fallback", "action_planner": "action_planner"},
+        {
+            "fallback": "fallback",
+            "action_planner": "action_planner"
+        }
     )
+
+    # Cierre de hilos
     workflow.add_edge("fallback", "action_planner")
     workflow.add_edge("action_planner", END)
 
     app = workflow.compile()
-
+    
     def runner(initial_state: AgentState) -> AgentState:
-        """Ejecutar el grafo de forma síncrona."""
-        result = app.invoke(initial_state)
-        return result
+        # El runner invoca el grafo compilado
+        return app.invoke(initial_state)
 
     return runner
-

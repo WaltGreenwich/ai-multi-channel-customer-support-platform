@@ -4,7 +4,7 @@ from typing import TypedDict, Literal, Optional
 
 
 class AgentState(TypedDict, total=False):
-    """Estado global del agente que fluye por los 8 nodos."""
+    """Estado global del agente que fluye por los nodos."""
 
     # Identificación
     conversation_id: str
@@ -31,6 +31,9 @@ class AgentState(TypedDict, total=False):
     detected_intent: str
     needs_rag: bool
     rag_results: list[dict]
+    
+    # --- CAMBIO IMPORTANTE: Soporte para atajo de saludos ---
+    is_greeting: bool 
 
     # Respuesta IA
     ai_response: str

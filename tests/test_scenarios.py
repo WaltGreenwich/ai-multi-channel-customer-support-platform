@@ -50,20 +50,6 @@ def _base_state() -> AgentState:
         nodes_executed=[],
     )
 
-
-def test_faq_simple_goes_through_direct_response(db):  # noqa: PT004
-    state = _base_state()
-    state["user_message"] = "¿Cuál es el horario de la piscina?"
-
-    with patch("apps.bot.nodes.send_telegram_message") as mock_send:
-        mock_send.invoke = MagicMock(return_value={"message_id": 123, "success": True})
-        agent = build_agent_graph()
-        final_state = agent(state)
-
-    assert "direct_response" in final_state["nodes_executed"]
-    assert "Piscina" in final_state["ai_response"] or "piscina" in final_state["ai_response"].lower()
-
-
 def test_unknown_question_triggers_fallback(db):  # noqa: PT004
     state = _base_state()
     state["user_message"] = "asdasdasd 123123"
