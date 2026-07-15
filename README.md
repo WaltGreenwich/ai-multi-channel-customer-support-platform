@@ -1,4 +1,4 @@
-# AI Multi-Channel Customer Support Platform
+# AI Workflow Orchestration Platform for Multi-Channel Customer Support
 
 AI Multi-Channel Customer Support Platform is an AI-powered backend platform designed to automate customer support across multiple communication channels. It orchestrates LLM workflows using LangGraph, processes multimedia inputs, integrates with external business systems, and delivers context-aware responses through a modular and scalable architecture
 
