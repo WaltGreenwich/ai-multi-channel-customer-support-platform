@@ -1,4 +1,4 @@
-# 🤖 Fran Bot - Agente Conversacional Autónomo para Condominios
+# AI Multi-Channel Customer Support Platform
 
 Sistema de atención automatizada 100% con IA que gestiona consultas de residentes sin intervención humana.
 
