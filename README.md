@@ -1,26 +1,37 @@
 # AI Multi-Channel Customer Support Platform
 
-Sistema de atención automatizada 100% con IA que gestiona consultas de residentes sin intervención humana.
+AI Multi-Channel Customer Support Platform is an AI-powered backend platform designed to automate customer support across multiple communication channels. It orchestrates LLM workflows using LangGraph, processes multimedia inputs, integrates with external business systems, and delivers context-aware responses through a modular and scalable architecture
 
-## 🎯 Características Principales
+## 🎯 Business Problem
 
-- ✅ **100% Autónomo**: Sin escalamiento humano, resuelve todo con IA
-- 🎤 **Procesamiento Multimedia**: Audio, imágenes, video, PDFs con Gemini
-- 📱 **Multi-canal**: Telegram (dev), WhatsApp + Gmail (prod)
-- 🧠 **LangGraph**: 8 nodos de procesamiento con Quality Check + Fallback
-- 📋 **Tickets Trello**: Automáticos con formato empresarial completo
-- 💾 **Storage Dual**: Filesystem local (dev) / Supabase Storage (prod)
-- ⚡ **Rápido**: Respuestas en < 3 segundos
-- 🌐 **Ngrok Integrado**: Webhooks automáticos sin instalación externa
+- Organizations receive customer requests from multiple communication channels including messaging platforms, email, and web forms.
 
-## 🚀 Instalación Rápida
+Traditional support teams spend considerable time answering repetitive questions, classifying requests, creating tickets, and managing context across disconnected systems.
 
-### Requisitos Previos
+As customer volume grows, operational costs increase while response consistency decreases.
 
-- ✅ Windows 10/11 con WSL2
-- ✅ Docker Desktop instalado
-- ✅ Ubuntu 22.04 en WSL2
-- ✅ VS Code con extensión WSL
+An AI-driven orchestration platform can automate a significant portion of these interactions while maintaining business rules, integrating with existing operational systems, and escalating only when necessary.
+
+## 🚀 Solution Overview
+
+- receives customer messages
+- normalizes incoming requests
+- processes multimedia content
+- retrieves contextual information
+- executes AI workflows
+- interacts with external services
+- stores conversation history
+- returns structured responses
+
+## Public Target
+
+- ✅ SaaS companies
+- ✅ Customer Support teams
+- ✅ Property Management
+- ✅ Healthcare
+- ✅ Logistics
+- ✅ Insurance
+- ✅ Education
 
 ### Paso 1: Configurar WSL2 (Si no lo tienes)
 ```powershell
