@@ -50,8 +50,6 @@ Propósito: Servirá como documento maestro. De aquí saldrán el README, la doc
 
      El objetivo no es simplemente generar respuestas, sino coordinar flujos de trabajo empresariales confiables impulsados ​​por IA.
 
-
-
 ## 3. Business Problem
 
      EN: Every organization receives customer requests through multiple communication channels.
@@ -110,3 +108,92 @@ Propósito: Servirá como documento maestro. De aquí saldrán el README, la doc
      - Proporcionar una plataforma de automatización sin código.
      - Implementar infraestructura multirregional o de alta disponibilidad.
      - Optimice el rendimiento de la inferencia de LLM más allá de las capacidades del proveedor.
+
+## Engineering Principles
+
+     1. Explicit Orchestration
+
+        Business workflows are represented explicitly rather than hidden inside prompts.
+
+     2. Provider Independence
+
+        External services are isolated behind dedicated integration layers.
+
+     3. Separation of Concerns
+
+        Infrastructure, orchestration, integrations, and business rules remain independent.
+
+     4. Stateful Execution
+
+        Workflow state is preserved across processing stages.
+
+     5. Asynchronous First
+
+        Long-running operations should not block user interactions.
+
+     6. Evolvability
+
+        New providers and communication channels should require minimal modifications to the core system.
+
+## Why not?
+
+     1. Why not a single prompt?
+
+        Porque diferentes solicitudes requieren distintos caminos de ejecución.
+
+     2. Why not call Gemini directly?
+
+        Porque los proveedores externos deben permanecer desacoplados.
+
+     3. Why not synchronous processing?
+
+        Porque el procesamiento multimedia puede bloquear el ciclo HTTP.
+
+     4. Why not embed business logic inside prompts?
+
+        Porque los prompts son difíciles de versionar y probar.
+
+# AI Multi-Channel Customer Support Platform
+
+│
+├── README.md
+│
+├── docs/
+│
+│ 01-executive-summary.md
+│
+│ 02-business-problem.md
+│
+│ 03-system-design.md
+│
+│ 04-architecture.md
+│
+│ 05-langgraph-workflow.md
+│
+│ 06-data-flow.md
+│
+│ 07-api-design.md
+│
+│ 08-deployment.md
+│
+│ 09-security.md
+│
+│ 10-scalability.md
+│
+│ 11-reliability.md
+│
+│ 12-observability.md
+│
+│ 13-testing-strategy.md
+│
+│ 14-architecture-decisions.md
+│
+│ 15-lessons-learned.md
+│
+│ 16-interview-guide.md
+│
+│ diagrams/
+│
+│ assets/
+│
+└── examples/
