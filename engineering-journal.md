@@ -1,23 +1,45 @@
-## Día 1
+# Engineering Journal — Entry #000
 
-    Pensaba que LangGraph era lo importante.
+## Título: El día que decidí aprender ingeniería y no solo programación.
 
-    Hoy entiendo que lo importante es la orquestación.
+        Hoy entendí que mi objetivo no es acumular tecnologías en el CV.
 
-## Día 2
+        Quiero aprender a diseñar sistemas que otros ingenieros puedan entender, mantener y evolucionar.
 
-    Pensaba que Engineering Thesis era una tesis universitaria demuestra que aprendiste.
+        No quiero depender de respuestas memorizadas para una entrevista.
 
-    Hoy entiendo que demuestra cómo resuelves problemas reales.
+        Quiero comprender las decisiones que hay detrás del software que construyo.
 
-## Día 8
+        Si algún día un Staff Engineer me pregunta "¿por qué diseñaste esto así?", quiero poder responder con argumentos, no con intuiciones.
 
-    Pensaba que Celery era solo un worker.
+        Project Atlas será el lugar donde aprenderé esa forma de pensar.
 
-    Hoy entiendo que desacopla el ciclo HTTP de tareas largas.
+## Design Review
 
-## Día 15
+    Las preguntas serán siempre las mismas:
 
-    Pensaba que Docker era para facilitar la instalación.
+        ¿Qué descubrimos?
+        ¿Qué evidencia lo respalda?
+        ¿Qué asumimos y aún debemos verificar?
+        ¿Qué impacto tiene en la arquitectura?
+        ¿Cómo explicaría esto en una entrevista?
 
-    Hoy entiendo que garantiza entornos reproducibles.
+# Atlas Principles
+
+No serán reglas del proyecto.
+
+- Principle 01
+
+        La lógica de negocio no debe depender del proveedor de IA.
+
+- Principle 02
+
+        El workflow coordina; las herramientas ejecutan.
+
+- Principle 03
+
+        El estado explícito facilita sistemas complejos.
+
+- Principle 04
+
+        Las integraciones deben poder reemplazarse con el menor impacto posible.
